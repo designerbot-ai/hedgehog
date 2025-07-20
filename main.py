@@ -7,90 +7,50 @@ import logging
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
-USER_AGENT = "haha@gmail.com"  # SEC requires email in user-agent
+@app.route("/", methods=["POST"])
+def parse_single_xml():
+    data = request.get_json()
+    url = data.get("url")
+    if not url:
+        return jsonify({"error": "Missing URL"}), 400
 
-@app.route("/", methods=["GET"])
-def health_check():
-    return jsonify({
-        "status": "OK",
-        "message": "XML Parser service is running. POST to /parse-xml with {'urls': [...]}"
-    })
-
-@app.route("/parse-xml", methods=["POST"])
-def parse_xml_files():
     try:
-        data = request.get_json()
-        if not isinstance(data, dict):
-            return jsonify({"error": "Invalid JSON payload, expected object with 'urls' key"}), 400
-
-        urls = data.get("urls")
-        if not isinstance(urls, list):
-            return jsonify({"error": "'urls' must be a list of XML URLs"}), 400
-
         headers = {
-            "User-Agent": USER_AGENT
+            "User-Agent": "haha@gmail.com"  # Your SEC-friendly user agent
         }
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
 
-        all_results = []
+        context = ET.iterparse(io.BytesIO(response.content), events=("start", "end"))
+        _, root = next(context)
 
-        for url in urls:
-            try:
-                logging.info(f"Fetching: {url}")
-                response = requests.get(url, headers=headers, timeout=10)
-                response.raise_for_status()
-                xml_data = io.BytesIO(response.content)
+        parsed_data = []
+        current_item = {}
 
-                context = ET.iterparse(xml_data, events=("start", "end"))
-                _, root = next(context)
+        for event, elem in context:
+            tag = elem.tag.split('}')[-1]
+            if event == 'end':
+                if tag == "infoTable":
+                    parsed_data.append(current_item)
+                    current_item = {}
+                elif tag in [
+                    "nameOfIssuer", "titleOfClass", "cusip", "value",
+                    "investmentDiscretion", "otherManager"
+                ]:
+                    current_item[tag] = elem.text
+                elif tag in ["sshPrnamt", "sshPrnamtType"]:
+                    current_item.setdefault("shrsOrPrnAmt", {})[tag] = elem.text
+                elif tag in ["Sole", "Shared", "None"]:
+                    current_item.setdefault("votingAuthority", {})[tag] = elem.text
 
-                current_item = {}
-                parsed_items = []
+            elem.clear()
+            root.clear()
 
-                for event, elem in context:
-                    tag = elem.tag.split("}")[-1].lower()
-
-                    if event == "end":
-                        if tag == "nameOfIssuer".lower():
-                            current_item["nameOfIssuer"] = elem.text
-                        elif tag == "titleOfClass".lower():
-                            current_item["titleOfClass"] = elem.text
-                        elif tag == "cusip":
-                            current_item["cusip"] = elem.text
-                        elif tag == "value":
-                            current_item["value"] = elem.text
-                        elif tag == "sshprnamt":
-                            current_item.setdefault("shrsOrPrnAmt", {})["sshPrnamt"] = elem.text
-                        elif tag == "sshprnamttype":
-                            current_item.setdefault("shrsOrPrnAmt", {})["sshPrnamtType"] = elem.text
-                        elif tag == "investmentdiscretion":
-                            current_item["investmentDiscretion"] = elem.text
-                        elif tag == "othermanager":
-                            current_item["otherManager"] = elem.text
-                        elif tag in ["sole", "shared", "none"]:
-                            current_item.setdefault("votingAuthority", {})[tag.capitalize()] = elem.text
-                        elif tag == "infotable":
-                            parsed_items.append(current_item)
-                            current_item = {}
-
-                        elem.clear()
-                        root.clear()
-
-                all_results.extend(parsed_items)
-                logging.info(f"Parsed {len(parsed_items)} items from {url}")
-
-            except requests.exceptions.RequestException as req_err:
-                logging.warning(f"Request failed for {url}: {req_err}")
-            except ET.ParseError as parse_err:
-                logging.warning(f"XML parsing failed for {url}: {parse_err}")
-            except Exception as generic_err:
-                logging.exception(f"Unexpected error processing {url}: {generic_err}")
-
-        return jsonify(all_results)
+        return jsonify(parsed_data)
 
     except Exception as e:
-        logging.exception("Fatal server error")
+        logging.exception("Parsing failed")
         return jsonify({"error": str(e)}), 500
 
-
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    app.run(host='0.0.0.0', port=8080)
