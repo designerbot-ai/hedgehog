@@ -16,7 +16,7 @@ def parse_single_xml():
 
     try:
         headers = {
-            "User-Agent": "haha@gmail.com"  # Your SEC-friendly user agent
+            "User-Agent": "haha@gmail.com"
         }
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
@@ -28,7 +28,7 @@ def parse_single_xml():
         current_item = {}
 
         for event, elem in context:
-            tag = elem.tag.split('}')[-1]
+            tag = elem.tag.split('}')[-1]  # Remove namespace
             if event == 'end':
                 if tag == "infoTable":
                     parsed_data.append(current_item)
@@ -37,15 +37,16 @@ def parse_single_xml():
                     "nameOfIssuer", "titleOfClass", "cusip", "value",
                     "investmentDiscretion", "otherManager"
                 ]:
-                    current_item[tag] = elem.text
+                    current_item[tag] = elem.text.strip() if elem.text else None
                 elif tag in ["sshPrnamt", "sshPrnamtType"]:
-                    current_item.setdefault("shrsOrPrnAmt", {})[tag] = elem.text
+                    current_item.setdefault("shrsOrPrnAmt", {})[tag] = elem.text.strip() if elem.text else None
                 elif tag in ["Sole", "Shared", "None"]:
-                    current_item.setdefault("votingAuthority", {})[tag] = elem.text
+                    current_item.setdefault("votingAuthority", {})[tag] = elem.text.strip() if elem.text else None
 
-            elem.clear()
-            root.clear()
+                elem.clear()
+                root.clear()
 
+        logging.info(f"Extracted {len(parsed_data)} entries from {url}")
         return jsonify(parsed_data)
 
     except Exception as e:
