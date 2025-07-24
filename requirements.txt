@@ -1,5 +1,5 @@
-
 flask
 requests
 gunicorn
 lxml
+google-cloud-storage
