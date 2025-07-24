@@ -11,7 +11,6 @@ import os
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# Init GCS client
 storage_client = storage.Client()
 BUCKET_NAME = "xml-parsed"
 
@@ -49,7 +48,6 @@ def parse_single_xml():
                     current_item.setdefault("votingAuthority", {})[tag] = elem.text.strip() if elem.text else None
 
                 elem.clear()
-                root.clear()
 
         # Save to GCS
         filename = f"{cik}_{uuid.uuid4().hex}.json"
