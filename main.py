@@ -3,21 +3,29 @@ import requests
 import xml.etree.ElementTree as ET
 import io
 import logging
+import json
+from google.cloud import storage
+import uuid
+import os
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
+
+# Init GCS client
+storage_client = storage.Client()
+BUCKET_NAME = "xml-parsed"
 
 @app.route("/", methods=["POST"])
 def parse_single_xml():
     data = request.get_json()
     url = data.get("url")
+    cik = data.get("cik") or "unknown"
+
     if not url:
         return jsonify({"error": "Missing URL"}), 400
 
     try:
-        headers = {
-            "User-Agent": "haha@gmail.com"
-        }
+        headers = {"User-Agent": "haha@gmail.com"}
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
 
@@ -28,15 +36,12 @@ def parse_single_xml():
         current_item = {}
 
         for event, elem in context:
-            tag = elem.tag.split('}')[-1]  # Remove namespace
+            tag = elem.tag.split('}')[-1]
             if event == 'end':
                 if tag == "infoTable":
                     parsed_data.append(current_item)
                     current_item = {}
-                elif tag in [
-                    "nameOfIssuer", "titleOfClass", "cusip", "value",
-                    "investmentDiscretion", "otherManager"
-                ]:
+                elif tag in ["nameOfIssuer", "titleOfClass", "cusip", "value", "investmentDiscretion", "otherManager"]:
                     current_item[tag] = elem.text.strip() if elem.text else None
                 elif tag in ["sshPrnamt", "sshPrnamtType"]:
                     current_item.setdefault("shrsOrPrnAmt", {})[tag] = elem.text.strip() if elem.text else None
@@ -46,8 +51,14 @@ def parse_single_xml():
                 elem.clear()
                 root.clear()
 
-        logging.info(f"Extracted {len(parsed_data)} entries from {url}")
-        return jsonify(parsed_data)
+        # Save to GCS
+        filename = f"{cik}_{uuid.uuid4().hex}.json"
+        bucket = storage_client.bucket(BUCKET_NAME)
+        blob = bucket.blob(filename)
+        blob.upload_from_string(json.dumps(parsed_data), content_type="application/json")
+
+        logging.info(f"Saved {len(parsed_data)} records to GCS as {filename}")
+        return jsonify({"status": "saved", "filename": filename})
 
     except Exception as e:
         logging.exception("Parsing failed")
