@@ -5,7 +5,8 @@ import io
 import logging
 import json
 from google.cloud import storage
-import uuid
+from urllib.parse import urlparse
+import re
 import os
 
 app = Flask(__name__)
@@ -14,16 +15,30 @@ logging.basicConfig(level=logging.INFO)
 storage_client = storage.Client()
 BUCKET_NAME = "xml-parsed"
 
+def extract_accession_from_url(url):
+    match = re.search(r"edgar/data/\d+/(\d{18})", url)
+    return match.group(1) if match else "unknownaccession"
+
 @app.route("/", methods=["POST"])
 def parse_single_xml():
     data = request.get_json()
     url = data.get("url")
     cik = data.get("cik") or "unknown"
-
+    
     if not url:
         return jsonify({"error": "Missing URL"}), 400
 
     try:
+        accession = extract_accession_from_url(url)
+        filename = f"{cik}_{accession}.json"
+
+        bucket = storage_client.bucket(BUCKET_NAME)
+        blob = bucket.blob(filename)
+
+        if blob.exists():
+            logging.info(f"File {filename} already exists. Skipping.")
+            return jsonify({"status": "exists", "filename": filename})
+
         headers = {"User-Agent": "haha@gmail.com"}
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
@@ -46,15 +61,9 @@ def parse_single_xml():
                     current_item.setdefault("shrsOrPrnAmt", {})[tag] = elem.text.strip() if elem.text else None
                 elif tag in ["Sole", "Shared", "None"]:
                     current_item.setdefault("votingAuthority", {})[tag] = elem.text.strip() if elem.text else None
-
                 elem.clear()
 
-        # Save to GCS
-        filename = f"{cik}_{uuid.uuid4().hex}.json"
-        bucket = storage_client.bucket(BUCKET_NAME)
-        blob = bucket.blob(filename)
         blob.upload_from_string(json.dumps(parsed_data), content_type="application/json")
-
         logging.info(f"Saved {len(parsed_data)} records to GCS as {filename}")
         return jsonify({"status": "saved", "filename": filename})
 
