@@ -22,6 +22,7 @@ def extract_accession_from_url(url):
 @app.route("/", methods=["POST"])
 def parse_single_xml():
     data = request.get_json()
+    logging.info(f"Payload received: {data}")
     url = data.get("url")
     cik = data.get("cik") or "unknown"
     
